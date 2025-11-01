@@ -8,6 +8,36 @@ from app.resolvers.orchestrator import find_feed  # absolute import works from r
 from app.parser.rss_parser import PodcastRSSParser  # new parser module
 from app.http import get  # Import the HTTP utility for downloads
 
+def parse_episode_numbers(input_str: str, max_episodes: int) -> list[int] | None:
+    if not input_str or not input_str.strip():
+        return None
+    
+    indices = set()
+    parts = input_str.split(',')
+    
+    for part in parts:
+        part = part.strip()
+        if '-' in part:
+            try:
+                start, end = part.split('-')
+                start_num = int(start.strip())
+                end_num = int(end.strip())
+                if start_num < 1 or end_num > max_episodes or start_num > end_num:
+                    return None
+                indices.update(range(start_num - 1, end_num))
+            except:
+                return None
+        else:
+            try:
+                num = int(part)
+                if num < 1 or num > max_episodes:
+                    return None
+                indices.add(num - 1)
+            except:
+                return None
+    
+    return sorted(list(indices))
+
 st.set_page_config(page_title="Get RSS Feed (Open Source)", page_icon="ðŸ“»")
 
 st.title("Get RSS Feed (Open Source)")
@@ -18,8 +48,6 @@ if 'current_feed_url' not in st.session_state:
     st.session_state.current_feed_url = None
 if 'parsed_data' not in st.session_state:
     st.session_state.parsed_data = None
-if 'selected_episodes' not in st.session_state:
-    st.session_state.selected_episodes = set()
 
 with st.form("resolver"):
     user_input = st.text_input(
@@ -99,48 +127,29 @@ if st.session_state.parsed_data:
         st.write(f"**Description:** {podcast_info['description'][:300]}...")
     
     # Episode data preview
-    st.subheader("Episode Selection")
+    st.subheader("Episode Data Preview")
     
     if episodes:
-        selection_col1, selection_col2, selection_col3 = st.columns([2, 2, 3])
+        episodes_df = []
+        for i, ep in enumerate(episodes):
+            episodes_df.append({
+                'Episode': i + 1,
+                'Title': ep['title'][:50] + '...' if ep['title'] and len(ep['title']) > 50 else ep['title'],
+                'Date': ep['pub_date_clean'][:10] if ep['pub_date_clean'] else 'N/A',
+                'Duration': ep['duration'] or 'N/A',
+                'Audio URL': ep['audio_url'][:50] + '...' if ep['audio_url'] else 'N/A'
+            })
         
-        with selection_col1:
-            if st.button("Select All"):
-                st.session_state.selected_episodes = set(range(len(episodes)))
-                st.rerun()
-        
-        with selection_col2:
-            if st.button("Deselect All"):
-                st.session_state.selected_episodes = set()
-                st.rerun()
-        
-        with selection_col3:
-            selected_count = len(st.session_state.selected_episodes)
-            st.write(f"**{selected_count} episode{'s' if selected_count != 1 else ''} selected**")
+        st.dataframe(episodes_df, use_container_width=True, height=400)
         
         st.write("")
-        
-        scrollable_container = st.container(height=400)
-        
-        with scrollable_container:
-            for i, ep in enumerate(episodes):
-                col_check, col_info = st.columns([0.5, 9.5])
-                
-                with col_check:
-                    is_selected = i in st.session_state.selected_episodes
-                    if st.checkbox("", value=is_selected, key=f"ep_{i}", label_visibility="collapsed"):
-                        st.session_state.selected_episodes.add(i)
-                    else:
-                        st.session_state.selected_episodes.discard(i)
-                
-                with col_info:
-                    title_display = ep['title'][:70] + '...' if ep['title'] and len(ep['title']) > 70 else ep['title']
-                    date_display = ep['pub_date_clean'][:10] if ep['pub_date_clean'] else 'N/A'
-                    duration_display = ep['duration'] or 'N/A'
-                    
-                    st.write(f"**{i + 1}. {title_display}**")
-                    st.caption(f"Date: {date_display} | Duration: {duration_display}")
-                    st.write("")
+        st.write("**Select Episodes to Download:**")
+        episode_input = st.text_input(
+            "Enter episode numbers (e.g., 1,5,10-20,25)",
+            key="episode_selection",
+            placeholder="1,5,10-20"
+        )
+        st.caption(f"Available episodes: 1-{len(episodes)}")
 
     
     # Download options
@@ -152,13 +161,19 @@ if st.session_state.parsed_data:
     
     download_col1, download_col2 = st.columns(2)
     with download_col1:
-        download_selected = st.button("Download Selected Episodes", type="primary", disabled=len(st.session_state.selected_episodes) == 0)
+        download_selected = st.button("Download Selected Episodes", type="primary")
     with download_col2:
         download_all = st.button("Download All Episodes", type="secondary")
     
     if download_selected or download_all:
         if download_selected:
-            selected_indices = sorted(list(st.session_state.selected_episodes))
+            episode_input = st.session_state.get('episode_selection', '')
+            selected_indices = parse_episode_numbers(episode_input, len(episodes))
+            
+            if selected_indices is None or len(selected_indices) == 0:
+                st.error("Please enter valid episode numbers (e.g., 1,5,10-20)")
+                st.stop()
+            
             episodes_to_download = [episodes[i] for i in selected_indices]
         else:
             episodes_to_download = episodes
