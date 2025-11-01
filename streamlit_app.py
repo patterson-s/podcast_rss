@@ -411,6 +411,31 @@ if st.session_state.parsed_data:
                 else:
                     st.write(f"✗ {t['title']}: {t['status']}")
         
+        if 'transcript_zips' not in st.session_state:
+            transcript_zip = io.BytesIO()
+            with zipfile.ZipFile(transcript_zip, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for t in st.session_state.transcriptions:
+                    if t['status'] == 'success':
+                        txt_filename = t['filename'].rsplit('.', 1)[0] + '.txt'
+                        zf.writestr(txt_filename, t['transcript'])
+            
+            combined_zip = io.BytesIO()
+            with zipfile.ZipFile(combined_zip, 'w', zipfile.ZIP_DEFLATED) as zf:
+                audio_zip_data = io.BytesIO(st.session_state.downloaded_episodes['zip_buffer'])
+                with zipfile.ZipFile(audio_zip_data, 'r') as audio_zip:
+                    for name in audio_zip.namelist():
+                        zf.writestr(name, audio_zip.read(name))
+                
+                for t in st.session_state.transcriptions:
+                    if t['status'] == 'success':
+                        txt_filename = t['filename'].rsplit('.', 1)[0] + '.txt'
+                        zf.writestr(txt_filename, t['transcript'])
+            
+            st.session_state.transcript_zips = {
+                'transcripts_only': transcript_zip.getvalue(),
+                'combined': combined_zip.getvalue()
+            }
+        
         st.write("**Download Options:**")
         
         col1, col2, col3 = st.columns(3)
@@ -425,39 +450,18 @@ if st.session_state.parsed_data:
             )
         
         with col2:
-            transcript_zip = io.BytesIO()
-            with zipfile.ZipFile(transcript_zip, 'w', zipfile.ZIP_DEFLATED) as zf:
-                for t in st.session_state.transcriptions:
-                    if t['status'] == 'success':
-                        txt_filename = t['filename'].rsplit('.', 1)[0] + '.txt'
-                        zf.writestr(txt_filename, t['transcript'])
-            
-            transcript_zip.seek(0)
             st.download_button(
                 label="Download Transcripts Only (ZIP)",
-                data=transcript_zip.getvalue(),
+                data=st.session_state.transcript_zips['transcripts_only'],
                 file_name=f"{st.session_state.downloaded_episodes['podcast_name']}_transcripts.zip",
                 mime="application/zip",
                 type="secondary"
             )
         
         with col3:
-            combined_zip = io.BytesIO()
-            with zipfile.ZipFile(combined_zip, 'w', zipfile.ZIP_DEFLATED) as zf:
-                audio_zip_data = io.BytesIO(st.session_state.downloaded_episodes['zip_buffer'])
-                with zipfile.ZipFile(audio_zip_data, 'r') as audio_zip:
-                    for name in audio_zip.namelist():
-                        zf.writestr(name, audio_zip.read(name))
-                
-                for t in st.session_state.transcriptions:
-                    if t['status'] == 'success':
-                        txt_filename = t['filename'].rsplit('.', 1)[0] + '.txt'
-                        zf.writestr(txt_filename, t['transcript'])
-            
-            combined_zip.seek(0)
             st.download_button(
                 label="Download Both (ZIP)",
-                data=combined_zip.getvalue(),
+                data=st.session_state.transcript_zips['combined'],
                 file_name=f"{st.session_state.downloaded_episodes['podcast_name']}_complete.zip",
                 mime="application/zip",
                 type="primary"
