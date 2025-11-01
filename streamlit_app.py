@@ -8,7 +8,7 @@ from app.resolvers.orchestrator import find_feed  # absolute import works from r
 from app.parser.rss_parser import PodcastRSSParser  # new parser module
 from app.http import get  # Import the HTTP utility for downloads
 
-st.set_page_config(page_title="Get RSS Feed (Open Source)", page_icon="📻")
+st.set_page_config(page_title="Get RSS Feed (Open Source)", page_icon="ðŸ“»")
 
 st.title("Get RSS Feed (Open Source)")
 st.caption("Paste a podcast page URL or type a show title. Returns the canonical RSS feed if it exists.")
@@ -18,10 +18,12 @@ if 'current_feed_url' not in st.session_state:
     st.session_state.current_feed_url = None
 if 'parsed_data' not in st.session_state:
     st.session_state.parsed_data = None
+if 'selected_episodes' not in st.session_state:
+    st.session_state.selected_episodes = set()
 
 with st.form("resolver"):
     user_input = st.text_input(
-        "Apple/Spotify/Publisher URL — or a show title",
+        "Apple/Spotify/Publisher URL â€” or a show title",
         placeholder="https://podcasts.apple.com/gb/podcast/ukraine-the-latest/id1612424182",
     )
     submitted = st.form_submit_button("Find RSS Feed")
@@ -97,24 +99,49 @@ if st.session_state.parsed_data:
         st.write(f"**Description:** {podcast_info['description'][:300]}...")
     
     # Episode data preview
-    st.subheader("Episode Data Preview")
+    st.subheader("Episode Selection")
     
     if episodes:
-        # Show episodes in a data table
-        episodes_df = []
-        for i, ep in enumerate(episodes[:10]):  # Show first 10
-            episodes_df.append({
-                'Episode': i + 1,
-                'Title': ep['title'][:50] + '...' if ep['title'] and len(ep['title']) > 50 else ep['title'],
-                'Date': ep['pub_date_clean'][:10] if ep['pub_date_clean'] else 'N/A',
-                'Duration': ep['duration'] or 'N/A',
-                'Audio URL': ep['audio_url'][:50] + '...' if ep['audio_url'] else 'N/A'
-            })
+        selection_col1, selection_col2, selection_col3 = st.columns([2, 2, 3])
         
-        st.dataframe(episodes_df, use_container_width=True)
+        with selection_col1:
+            if st.button("Select All"):
+                st.session_state.selected_episodes = set(range(len(episodes)))
+                st.rerun()
         
-        if len(episodes) > 10:
-            st.info(f"Showing first 10 of {len(episodes)} episodes")
+        with selection_col2:
+            if st.button("Deselect All"):
+                st.session_state.selected_episodes = set()
+                st.rerun()
+        
+        with selection_col3:
+            selected_count = len(st.session_state.selected_episodes)
+            st.write(f"**{selected_count} episode{'s' if selected_count != 1 else ''} selected**")
+        
+        st.write("")
+        
+        scrollable_container = st.container(height=400)
+        
+        with scrollable_container:
+            for i, ep in enumerate(episodes):
+                col_check, col_info = st.columns([0.5, 9.5])
+                
+                with col_check:
+                    is_selected = i in st.session_state.selected_episodes
+                    if st.checkbox("", value=is_selected, key=f"ep_{i}", label_visibility="collapsed"):
+                        st.session_state.selected_episodes.add(i)
+                    else:
+                        st.session_state.selected_episodes.discard(i)
+                
+                with col_info:
+                    title_display = ep['title'][:70] + '...' if ep['title'] and len(ep['title']) > 70 else ep['title']
+                    date_display = ep['pub_date_clean'][:10] if ep['pub_date_clean'] else 'N/A'
+                    duration_display = ep['duration'] or 'N/A'
+                    
+                    st.write(f"**{i + 1}. {title_display}**")
+                    st.caption(f"Date: {date_display} | Duration: {duration_display}")
+                    st.write("")
+
     
     # Download options
     st.subheader("Export Options")
@@ -125,16 +152,20 @@ if st.session_state.parsed_data:
     
     download_col1, download_col2 = st.columns(2)
     with download_col1:
-        download_sample = st.button("Download 5 Sample Episodes", type="primary")
+        download_selected = st.button("Download Selected Episodes", type="primary", disabled=len(st.session_state.selected_episodes) == 0)
     with download_col2:
         download_all = st.button("Download All Episodes", type="secondary")
     
-    if download_sample or download_all:
-        episodes_to_download = episodes[:5] if download_sample else episodes
+    if download_selected or download_all:
+        if download_selected:
+            selected_indices = sorted(list(st.session_state.selected_episodes))
+            episodes_to_download = [episodes[i] for i in selected_indices]
+        else:
+            episodes_to_download = episodes
         
-        if len(episodes_to_download) > 20 and download_all:
-            st.warning(f"You're about to download {len(episodes_to_download)} episodes. This may take a very long time and create a large file. Consider downloading samples first.")
-            confirm = st.button("Yes, download all episodes anyway")
+        if len(episodes_to_download) > 20:
+            st.warning(f"You're about to download {len(episodes_to_download)} episodes. This may take a very long time and create a large file.")
+            confirm = st.button("Yes, download anyway")
             if not confirm:
                 st.stop()
         
@@ -167,11 +198,11 @@ if st.session_state.parsed_data:
                         # Add to zip
                         zip_file.writestr(filename, audio_response.content)
                         
-                        download_results.append(f"✅ {episode['title']}")
+                        download_results.append(f"âœ… {episode['title']}")
                         successful_downloads += 1
                         
                     except Exception as e:
-                        download_results.append(f"❌ {episode['title']}: {str(e)}")
+                        download_results.append(f"âŒ {episode['title']}: {str(e)}")
                 
                 # Update progress
                 progress_bar.progress((i + 1) / len(episodes_to_download))
@@ -190,10 +221,10 @@ if st.session_state.parsed_data:
         if successful_downloads > 0:
             zip_buffer.seek(0)
             podcast_name = podcast_info.get('title', 'podcast').replace(' ', '_')
-            download_type = 'sample' if download_sample else 'all'
+            download_type = 'selected' if download_selected else 'all'
             
             st.download_button(
-                label=f"📦 Download {successful_downloads} Episodes (ZIP)",
+                label=f"Download {successful_downloads} Episodes (ZIP)",
                 data=zip_buffer.getvalue(),
                 file_name=f"{podcast_name}_{download_type}_episodes.zip",
                 mime="application/zip",
@@ -207,11 +238,6 @@ if st.session_state.parsed_data:
         else:
             st.error("No episodes were successfully downloaded.")
     
-    # Clear downloads button
-    if st.button("🗑️ Clear Downloaded Files"):
-        if 'downloaded_files' in st.session_state:
-            del st.session_state.downloaded_files
-        st.success("Cleared downloaded files from memory")
     
     st.divider()
     st.subheader("Export Metadata")
@@ -283,7 +309,7 @@ st.markdown(
     ---  
     **Notes**  
     - Apple resolution uses the public Lookup/Search APIs.  
-    - Spotify resolution uses public oEmbed → title match via Apple.  
+    - Spotify resolution uses public oEmbed â†’ title match via Apple.  
     - Generic pages use HTML autodiscovery with validation.  
     - RSS parsing extracts all episode metadata and audio download links.
     """
