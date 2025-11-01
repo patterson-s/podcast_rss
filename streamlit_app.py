@@ -41,6 +41,78 @@ def parse_episode_numbers(input_str: str, max_episodes: int) -> list[int] | None
 
 st.set_page_config(page_title="Get RSS Feed (Open Source)", page_icon="Ã°Å¸â€œÂ»")
 
+with st.sidebar:
+    st.header("How to Use This Tool")
+    
+    with st.expander("Use Case 1: RSS Feed Discovery", expanded=False):
+        st.markdown("""
+        **Find and export podcast RSS feeds for production use.**
+        
+        This is useful for:
+        - Finding RSS feeds from Apple Podcasts or Spotify URLs
+        - Discovering feeds from publisher websites
+        - Searching for podcasts by name
+        - Exporting episode metadata and audio URLs
+        
+        **Workflow:**
+        1. Enter a podcast URL or search term
+        2. Click "Find RSS Feed"
+        3. Click "Parse feed" to load episodes
+        4. Export metadata as JSON/CSV or download audio URLs
+        5. Use the RSS feed or exported URLs in your own pipeline
+        
+        **Production Use:** This feed discovery feature is fully functional for production workflows. Download the RSS feed URL or episode lists, then process episodes locally with your own infrastructure.
+        """)
+    
+    with st.expander("Use Case 2: End-to-End Demonstration", expanded=False):
+        st.markdown("""
+        **Illustrate the complete podcast transcription pipeline.**
+        
+        This demonstrates our research process:
+        1. RSS feed discovery
+        2. Episode downloading
+        3. Audio transcription
+        
+        **Workflow:**
+        1. Find and parse a podcast RSS feed
+        2. Select episodes to download (start small, 1-5 episodes)
+        3. Click "Download Selected Episodes"
+        4. Click "Transcribe Episodes" (uses CPU, will be slow)
+        5. Download audio, transcripts, or both
+        
+        **Note:** This is for demonstration only. CPU-based transcription is very slow. For actual dataset generation, we used GPU-accelerated infrastructure (10-30x faster). See our [Colab notebook](https://colab.research.google.com/drive/10qucU8nBED9LA-aIZ8ViK7yR_4btqEnL?usp=sharing) for the production approach.
+        """)
+    
+    with st.expander("Use Case 3: Quick Transcription", expanded=False):
+        st.markdown("""
+        **Transcribe a few podcast episodes for analysis.**
+        
+        **Workflow:**
+        1. Find your podcast
+        2. Download 1-5 episodes
+        3. Transcribe them in-app
+        4. Download transcripts as text files
+        
+        **Best for:** Transcribing small numbers of episodes when you don't have GPU infrastructure available. Not suitable for large-scale transcription.
+        """)
+    
+    with st.expander("Tips & Limitations", expanded=False):
+        st.markdown("""
+        **Tips:**
+        - Start with 1-3 episodes to test transcription speed
+        - Use "Download Audio URLs" to get links for external processing
+        - RSS discovery works for most podcasts except platform exclusives
+        
+        **Limitations:**
+        - Transcription is CPU-based and slow (30-90 min per 30-min episode)
+        - Cannot access Spotify/Apple exclusive content without RSS feeds
+        - Large downloads (>20 episodes) may timeout
+        - Whisper base model downloads 74 MB on first use
+        """)
+    
+    st.divider()
+    st.markdown("**[View on GitHub](#)** | **[Documentation](https://github.com/yourrepo/podcast_rss)**")
+
 st.title("Get RSS Feed (Open Source)")
 st.caption("Paste a podcast page URL or type a show title. Returns the canonical RSS feed if it exists.")
 
