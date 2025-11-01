@@ -4,9 +4,10 @@ import streamlit as st
 import re
 import zipfile
 import io
-from app.resolvers.orchestrator import find_feed  # absolute import works from root
-from app.parser.rss_parser import PodcastRSSParser  # new parser module
-from app.http import get  # Import the HTTP utility for downloads
+from app.resolvers.orchestrator import find_feed
+from app.parser.rss_parser import PodcastRSSParser
+from app.http import get
+from app.transcriber import Transcriber
 
 def parse_episode_numbers(input_str: str, max_episodes: int) -> list[int] | None:
     if not input_str or not input_str.strip():
@@ -38,7 +39,7 @@ def parse_episode_numbers(input_str: str, max_episodes: int) -> list[int] | None
     
     return sorted(list(indices))
 
-st.set_page_config(page_title="Get RSS Feed (Open Source)", page_icon="ðŸ“»")
+st.set_page_config(page_title="Get RSS Feed (Open Source)", page_icon="Ã°Å¸â€œÂ»")
 
 st.title("Get RSS Feed (Open Source)")
 st.caption("Paste a podcast page URL or type a show title. Returns the canonical RSS feed if it exists.")
@@ -48,10 +49,14 @@ if 'current_feed_url' not in st.session_state:
     st.session_state.current_feed_url = None
 if 'parsed_data' not in st.session_state:
     st.session_state.parsed_data = None
+if 'downloaded_episodes' not in st.session_state:
+    st.session_state.downloaded_episodes = None
+if 'transcriptions' not in st.session_state:
+    st.session_state.transcriptions = None
 
 with st.form("resolver"):
     user_input = st.text_input(
-        "Apple/Spotify/Publisher URL â€” or a show title",
+        "Apple/Spotify/Publisher URL Ã¢â‚¬â€ or a show title",
         placeholder="https://podcasts.apple.com/gb/podcast/ukraine-the-latest/id1612424182",
     )
     submitted = st.form_submit_button("Find RSS Feed")
@@ -186,14 +191,13 @@ if st.session_state.parsed_data:
         
         st.info(f"Preparing download of {len(episodes_to_download)} episodes...")
         
-        # Create a progress bar
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        # Create zip file in memory
         zip_buffer = io.BytesIO()
         download_results = []
         successful_downloads = 0
+        downloaded_episode_data = []
         
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
             for i, episode in enumerate(episodes_to_download):
@@ -201,30 +205,40 @@ if st.session_state.parsed_data:
                     status_text.text(f"Downloading: {episode['title'][:50]}...")
                     
                     try:
-                        # Generate clean filename
                         clean_title = re.sub(r'[^\w\s-]', '', episode['title'] or 'episode')
                         clean_title = re.sub(r'[-\s]+', '_', clean_title)[:50]
                         filename = f"{i+1:02d}_{clean_title}.mp3"
                         
-                        # Download the file
                         audio_response = get(episode['audio_url'])
                         audio_response.raise_for_status()
                         
-                        # Add to zip
                         zip_file.writestr(filename, audio_response.content)
                         
-                        download_results.append(f"âœ… {episode['title']}")
+                        downloaded_episode_data.append({
+                            'filename': filename,
+                            'title': episode['title'],
+                            'audio_bytes': audio_response.content,
+                            'episode_index': i
+                        })
+                        
+                        download_results.append(f"✓ {episode['title']}")
                         successful_downloads += 1
                         
                     except Exception as e:
-                        download_results.append(f"âŒ {episode['title']}: {str(e)}")
+                        download_results.append(f"✗ {episode['title']}: {str(e)}")
                 
-                # Update progress
                 progress_bar.progress((i + 1) / len(episodes_to_download))
         
         status_text.text("Download complete!")
         
-        # Show download results
+        st.session_state.downloaded_episodes = {
+            'episodes': downloaded_episode_data,
+            'zip_buffer': zip_buffer.getvalue(),
+            'podcast_name': podcast_info.get('title', 'podcast').replace(' ', '_'),
+            'download_type': 'selected' if download_selected else 'all'
+        }
+        st.session_state.transcriptions = None
+        
         st.write("**Download Results:**")
         st.write(f"Successfully downloaded: {successful_downloads}/{len(episodes_to_download)} episodes")
         
@@ -232,26 +246,151 @@ if st.session_state.parsed_data:
             for result in download_results:
                 st.write(result)
         
-        # Provide zip download
         if successful_downloads > 0:
-            zip_buffer.seek(0)
-            podcast_name = podcast_info.get('title', 'podcast').replace(' ', '_')
-            download_type = 'selected' if download_selected else 'all'
+            zip_size_mb = len(zip_buffer.getvalue()) / (1024 * 1024)
             
             st.download_button(
                 label=f"Download {successful_downloads} Episodes (ZIP)",
                 data=zip_buffer.getvalue(),
-                file_name=f"{podcast_name}_{download_type}_episodes.zip",
+                file_name=f"{st.session_state.downloaded_episodes['podcast_name']}_{st.session_state.downloaded_episodes['download_type']}_episodes.zip",
                 mime="application/zip",
                 type="primary"
             )
             
-            # Calculate approximate file size
-            zip_size_mb = len(zip_buffer.getvalue()) / (1024 * 1024)
             st.caption(f"Zip file size: ~{zip_size_mb:.1f} MB")
         
         else:
             st.error("No episodes were successfully downloaded.")
+    
+    if st.session_state.downloaded_episodes and not st.session_state.transcriptions:
+        st.divider()
+        st.subheader("Transcription")
+        st.write("**Transcribe Downloaded Episodes:**")
+        st.caption("Using Whisper base model. Large episodes may take several minutes each.")
+        
+        if st.button("Transcribe Episodes", type="secondary"):
+            episodes_data = st.session_state.downloaded_episodes['episodes']
+            
+            st.info(f"Starting transcription of {len(episodes_data)} episodes...")
+            
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            transcriber = Transcriber(model_name="base")
+            status_text.text("Loading Whisper model...")
+            transcriber.load_model()
+            
+            transcription_results = []
+            successful_transcriptions = 0
+            
+            for i, ep_data in enumerate(episodes_data):
+                status_text.text(f"Transcribing ({i+1}/{len(episodes_data)}): {ep_data['title'][:50]}...")
+                
+                try:
+                    transcript = transcriber.transcribe_audio_bytes(
+                        ep_data['audio_bytes'],
+                        ep_data['filename']
+                    )
+                    
+                    if transcript:
+                        transcription_results.append({
+                            'filename': ep_data['filename'],
+                            'title': ep_data['title'],
+                            'transcript': transcript,
+                            'status': 'success'
+                        })
+                        successful_transcriptions += 1
+                    else:
+                        transcription_results.append({
+                            'filename': ep_data['filename'],
+                            'title': ep_data['title'],
+                            'transcript': None,
+                            'status': 'failed'
+                        })
+                
+                except Exception as e:
+                    transcription_results.append({
+                        'filename': ep_data['filename'],
+                        'title': ep_data['title'],
+                        'transcript': None,
+                        'status': f'error: {str(e)}'
+                    })
+                
+                progress_bar.progress((i + 1) / len(episodes_data))
+            
+            status_text.text("Transcription complete!")
+            
+            st.session_state.transcriptions = transcription_results
+            st.rerun()
+    
+    if st.session_state.transcriptions:
+        st.divider()
+        st.subheader("Transcription Results")
+        
+        successful = sum(1 for t in st.session_state.transcriptions if t['status'] == 'success')
+        total = len(st.session_state.transcriptions)
+        
+        st.write(f"**Successfully transcribed: {successful}/{total} episodes**")
+        
+        with st.expander("View transcription details"):
+            for t in st.session_state.transcriptions:
+                if t['status'] == 'success':
+                    st.write(f"✓ {t['title']}")
+                else:
+                    st.write(f"✗ {t['title']}: {t['status']}")
+        
+        st.write("**Download Options:**")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.download_button(
+                label="Download Audio Only (ZIP)",
+                data=st.session_state.downloaded_episodes['zip_buffer'],
+                file_name=f"{st.session_state.downloaded_episodes['podcast_name']}_audio.zip",
+                mime="application/zip",
+                type="secondary"
+            )
+        
+        with col2:
+            transcript_zip = io.BytesIO()
+            with zipfile.ZipFile(transcript_zip, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for t in st.session_state.transcriptions:
+                    if t['status'] == 'success':
+                        txt_filename = t['filename'].rsplit('.', 1)[0] + '.txt'
+                        zf.writestr(txt_filename, t['transcript'])
+            
+            transcript_zip.seek(0)
+            st.download_button(
+                label="Download Transcripts Only (ZIP)",
+                data=transcript_zip.getvalue(),
+                file_name=f"{st.session_state.downloaded_episodes['podcast_name']}_transcripts.zip",
+                mime="application/zip",
+                type="secondary"
+            )
+        
+        with col3:
+            combined_zip = io.BytesIO()
+            with zipfile.ZipFile(combined_zip, 'w', zipfile.ZIP_DEFLATED) as zf:
+                audio_zip_data = io.BytesIO(st.session_state.downloaded_episodes['zip_buffer'])
+                with zipfile.ZipFile(audio_zip_data, 'r') as audio_zip:
+                    for name in audio_zip.namelist():
+                        zf.writestr(name, audio_zip.read(name))
+                
+                for t in st.session_state.transcriptions:
+                    if t['status'] == 'success':
+                        txt_filename = t['filename'].rsplit('.', 1)[0] + '.txt'
+                        zf.writestr(txt_filename, t['transcript'])
+            
+            combined_zip.seek(0)
+            st.download_button(
+                label="Download Both (ZIP)",
+                data=combined_zip.getvalue(),
+                file_name=f"{st.session_state.downloaded_episodes['podcast_name']}_complete.zip",
+                mime="application/zip",
+                type="primary"
+            )
+
     
     
     st.divider()
@@ -324,7 +463,7 @@ st.markdown(
     ---  
     **Notes**  
     - Apple resolution uses the public Lookup/Search APIs.  
-    - Spotify resolution uses public oEmbed â†’ title match via Apple.  
+    - Spotify resolution uses public oEmbed Ã¢â€ â€™ title match via Apple.  
     - Generic pages use HTML autodiscovery with validation.  
     - RSS parsing extracts all episode metadata and audio download links.
     """
